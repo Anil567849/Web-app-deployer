@@ -1,12 +1,9 @@
 import { exec } from 'child_process'
 import path from 'path'
 import fs from 'fs'
-const mime = require('mime-types')
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3')
-const Redis = require('ioredis')
-
-const redisUrl = '';
-const publisher = new Redis(redisUrl)
+import mime from 'mime-types'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { Kafka } from 'kafkajs'
 
 const s3Client = new S3Client({
     region: '',
@@ -17,12 +14,36 @@ const s3Client = new S3Client({
 })
 
 const PROJECT_ID = process.env.PROJECT_ID
+const DEPLOYEMENT_ID = process.env.DEPLOYEMENT_ID
 
-function publishLog(log) {
-    publisher.publish(`logs:${PROJECT_ID}`, JSON.stringify({ log }))
+const kafka = new Kafka({
+    clientId: `docker-build-server-${DEPLOYEMENT_ID}`,
+    brokers: [''],
+    ssl: {
+        ca: [fs.readFileSync(path.join(__dirname, 'kafka.pem'), 'utf-8')]
+    },
+    sasl: {
+        username: '',
+        password: '',
+        mechanism: 'plain'
+    }
+})
+
+const producer = kafka.producer()
+
+async function publishLog(log) {
+    await producer.send({ 
+        topic: `container-logs`,
+         messages: [{ 
+            key: 'log', 
+            value: JSON.stringify({ PROJECT_ID, DEPLOYEMENT_ID, log }) 
+        }] 
+    })
 }
 
 async function init(){
+    await producer.connect()
+
     console.log('Executing script.js')
     publishLog('Build Started...')
 
@@ -49,6 +70,7 @@ async function init(){
 
         console.log("Starting to upload");
         publishLog(`Starting to upload`)
+        
         for (const file of distFolderContents) {
             const filePath = path.join(distFolderPath, file)
             if (fs.lstatSync(filePath).isDirectory()) continue;
@@ -69,6 +91,7 @@ async function init(){
         }
         publishLog(`Done`)
         console.log('Done')
+        process.exit(0)
     })
 }
 
